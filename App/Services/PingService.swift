@@ -188,8 +188,9 @@ final class ICMPPinger {
         guard sent == packet.count else { return nil }
 
         var buf = [UInt8](repeating: 0, count: 1500)
+        let bufLen = buf.count
         let received = buf.withUnsafeMutableBytes { ptr -> ssize_t in
-            recv(socketFD, ptr.baseAddress, buf.count, 0)
+            recv(socketFD, ptr.baseAddress, bufLen, 0)
         }
         guard received > 0 else { return nil }
         return Int(Date().timeIntervalSince(started) * 1000)
