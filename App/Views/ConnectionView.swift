@@ -2,29 +2,29 @@ import SwiftUI
 
 struct ConnectionView: View {
     @EnvironmentObject private var appViewModel: AppViewModel
-    @State private var now: Date = Date()
-
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 22) {
-                    statusHeader
-                    bigToggle
-                    if let server = appViewModel.selectedServer {
-                        currentServerCard(server)
+            // TimelineView ticks every second on its own — far more reliable
+            // than Timer.publish + onReceive, especially across tab changes.
+            TimelineView(.periodic(from: Date(), by: 1)) { context in
+                ScrollView {
+                    VStack(spacing: 22) {
+                        statusHeader(now: context.date)
+                        bigToggle
+                        if let server = appViewModel.selectedServer {
+                            currentServerCard(server)
+                        }
+                        statsGrid
+                        Spacer(minLength: 12)
                     }
-                    statsGrid
-                    Spacer(minLength: 12)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 6)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 6)
+                .background(Color(.systemBackground))
             }
-            .background(Color(.systemBackground))
             .navigationTitle("VPN Client")
             .navigationBarTitleDisplayMode(.inline)
-            .onReceive(ticker) { date in self.now = date }
             .alert("Ошибка", isPresented: errorPresented) {
                 Button("OK", role: .cancel) { appViewModel.lastError = nil }
             } message: {
@@ -42,7 +42,7 @@ struct ConnectionView: View {
 
     // MARK: – Subviews
 
-    private var statusHeader: some View {
+    private func statusHeader(now: Date) -> some View {
         VStack(spacing: 6) {
             Text(appViewModel.connection.state.localizedTitle)
                 .font(.system(.title3, design: .rounded, weight: .semibold))
@@ -66,59 +66,10 @@ struct ConnectionView: View {
     }
 
     private var bigToggle: some View {
-        Button {
-            Task { await appViewModel.toggleConnection() }
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(toggleGradient)
-                    .frame(width: 200, height: 200)
-                    .shadow(color: toggleShadow, radius: 24, y: 4)
-
-                if appViewModel.connection.state == .connecting ||
-                   appViewModel.connection.state == .reconnecting ||
-                   appViewModel.connection.state == .disconnecting {
-                    ProgressView()
-                        .controlSize(.large)
-                        .tint(.white)
-                } else {
-                    Image(systemName: appViewModel.connection.state.isActive
-                          ? "power.circle.fill"
-                          : "power")
-                        .font(.system(size: 80, weight: .light))
-                        .foregroundStyle(.white)
-                        .symbolRenderingMode(.hierarchical)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(appViewModel.connection.state.isActive ? 1.0 : 0.97)
-        .animation(.spring(response: 0.4, dampingFraction: 0.7),
-                   value: appViewModel.connection.state)
-    }
-
-    private var toggleGradient: LinearGradient {
-        let colors: [Color]
-        switch appViewModel.connection.state {
-        case .connected:
-            colors = [Color(red: 0.20, green: 0.78, blue: 0.46),
-                      Color(red: 0.10, green: 0.55, blue: 0.40)]
-        case .connecting, .reconnecting:
-            colors = [Color.orange, Color(red: 0.85, green: 0.40, blue: 0.10)]
-        case .failed:
-            colors = [Color(red: 0.92, green: 0.30, blue: 0.30),
-                      Color(red: 0.65, green: 0.15, blue: 0.15)]
-        default:
-            colors = [Color.accentColor.opacity(0.95),
-                      Color.accentColor.opacity(0.75)]
-        }
-        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    private var toggleShadow: Color {
-        appViewModel.connection.state.isActive
-            ? Color.green.opacity(0.45)
-            : Color.accentColor.opacity(0.30)
+        ConnectButton(
+            state: appViewModel.connection.state,
+            action: { Task { await appViewModel.toggleConnection() } }
+        )
     }
 
     private func currentServerCard(_ server: Server) -> some View {

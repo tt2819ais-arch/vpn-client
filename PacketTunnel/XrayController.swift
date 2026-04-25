@@ -19,11 +19,17 @@ final class XrayController {
         self.backend = backend
     }
 
+    /// Whether the libXray binary is wired up. When false the tunnel must
+    /// refuse to install network settings — capturing all traffic without a
+    /// functional engine would simply break the user's internet.
+    var isAvailable: Bool { backend.isAvailable }
+
     func start(configJSON: String, dataDir: URL) throws {
         let configPath = dataDir.appendingPathComponent("config.json")
         try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
 
         os_log("Starting xray-core with config at %{public}@", log: log, type: .info, configPath.path)
+        LogStore.shared.info("xray-core start config=\(configPath.lastPathComponent)", tag: "Tunnel")
         try backend.start(configPath: configPath.path, dataDir: dataDir.path)
     }
 
@@ -39,6 +45,7 @@ final class XrayController {
 // MARK: – Backend abstraction
 
 protocol XrayBackend {
+    var isAvailable: Bool { get }
     func start(configPath: String, dataDir: String) throws
     func stop()
     func queryStats() -> TrafficStats
@@ -53,13 +60,17 @@ final class LibXrayBackend: XrayBackend {
     private var lastTxBytes: UInt64 = 0
     private var lastSampleAt: Date = .distantPast
 
+    var isAvailable: Bool { dynamicSymbol(named: "LibXrayRun") != nil }
+
     func start(configPath: String, dataDir: String) throws {
         // libXray exposes `LibXrayRun(base64(json{datadir, configPath}))`.
         // We dlsym to avoid a hard link dependency at build time so the project
         // builds in CI even before the binary framework is vendored.
         guard let runFn = dynamicSymbol(named: "LibXrayRun") else {
-            os_log("LibXrayRun not found — running in stub mode", log: log, type: .error)
-            return
+            os_log("LibXrayRun not found — libXray binary missing", log: log, type: .error)
+            LogStore.shared.error("LibXrayRun symbol not found — libXray.xcframework not bundled", tag: "Tunnel")
+            throw NSError(domain: "LibXrayBackend", code: 100,
+                          userInfo: [NSLocalizedDescriptionKey: "VPN-движок (libXray) не подключён в этой сборке. См. README \u{00BB} Vendoring libXray."])
         }
         let request: [String: String] = [
             "datDir": dataDir,

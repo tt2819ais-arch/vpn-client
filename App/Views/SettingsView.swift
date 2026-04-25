@@ -41,6 +41,23 @@ struct SettingsView: View {
                         .disabled(true)
                 }
 
+                Section("Диагностика") {
+                    NavigationLink {
+                        LogsView()
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading) {
+                                Text("Логи")
+                                Text("Просмотр и копирование")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "doc.text")
+                        }
+                    }
+                }
+
                 Section {
                     Link(destination: URL(string: "https://t.me/MaksimXyila")!) {
                         Label {

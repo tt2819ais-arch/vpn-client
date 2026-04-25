@@ -33,6 +33,8 @@ final class AppViewModel: ObservableObject {
         let stored = AppGroup.defaults.decoded(AppSettings.self, for: .settings) ?? .default
         self.settings = stored
 
+        LogStore.shared.info("App launched. \(serverStore.servers.count) servers loaded. theme=\(stored.theme.rawValue) ping=\(stored.pingProtocol.rawValue)", tag: "App")
+
         bindVPNManager()
         loadPersistedConnection()
         startStatsTimer()
@@ -52,6 +54,7 @@ final class AppViewModel: ObservableObject {
     func toggleConnection() async {
         haptics.tap(.medium, enabled: settings.hapticsEnabled)
         guard let server = selectedServer else {
+            LogStore.shared.warn("Toggle pressed without a selected server", tag: "User")
             lastError = "Сначала выберите сервер"
             haptics.notify(.error, enabled: settings.hapticsEnabled)
             return
@@ -59,37 +62,53 @@ final class AppViewModel: ObservableObject {
 
         do {
             if connection.state.isActive {
+                LogStore.shared.info("User pressed: DISCONNECT (\(server.name))", tag: "User")
                 try await vpnManager.disconnect()
                 haptics.notify(.success, enabled: settings.hapticsEnabled)
+                LogStore.shared.info("Disconnected successfully", tag: "VPN")
             } else {
+                LogStore.shared.info("User pressed: CONNECT to \(server.name) [\(server.address):\(server.port)]", tag: "User")
                 try await vpnManager.connect(to: server)
                 haptics.notify(.success, enabled: settings.hapticsEnabled)
+                LogStore.shared.info("Connect call returned, awaiting state", tag: "VPN")
                 Task { await refreshCountry() }
             }
         } catch {
             haptics.notify(.error, enabled: settings.hapticsEnabled)
             lastError = error.localizedDescription
+            LogStore.shared.error("VPN toggle failed: \(error.localizedDescription)", tag: "VPN")
         }
     }
 
     func selectServer(_ server: Server) async {
         haptics.tap(.light, enabled: settings.hapticsEnabled)
+        LogStore.shared.info("User selected server: \(server.name)", tag: "User")
         settings.selectedServerID = server.id
         if connection.state.isActive {
             do {
+                LogStore.shared.info("Reconnecting to new server while active", tag: "VPN")
                 try await vpnManager.connect(to: server)
             } catch {
                 lastError = error.localizedDescription
+                LogStore.shared.error("Reconnect failed: \(error.localizedDescription)", tag: "VPN")
             }
         }
     }
 
     func ping(_ server: Server) async {
         haptics.tap(.light, enabled: settings.hapticsEnabled)
+        let proto = settings.pingProtocol
+        LogStore.shared.info("Ping start \(proto.rawValue) -> \(server.name) [\(server.address):\(server.port)]", tag: "Ping")
         pingingServerIDs.insert(server.id)
         defer { pingingServerIDs.remove(server.id) }
-        let result = await pingService.ping(server: server, protocol: settings.pingProtocol)
+        let result = await pingService.ping(server: server, protocol: proto)
         pings[server.id] = result
+        if let ms = result.latencyMs {
+            LogStore.shared.info("Ping result \(proto.rawValue) -> \(server.name): \(ms) ms", tag: "Ping")
+        } else {
+            let reason = result.error ?? "unknown"
+            LogStore.shared.warn("Ping failed \(proto.rawValue) -> \(server.name): \(reason)", tag: "Ping")
+        }
         haptics.notify(result.isSuccess ? .success : .error,
                        enabled: settings.hapticsEnabled)
     }
@@ -123,6 +142,9 @@ final class AppViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
                 guard let self else { return }
+                if self.connection.state != state {
+                    LogStore.shared.info("VPN state -> \(state.rawValue)", tag: "VPN")
+                }
                 self.connection.state = state
                 if state == .connected, self.connection.connectedSince == nil {
                     self.connection.connectedSince = Date()

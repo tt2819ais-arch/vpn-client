@@ -67,6 +67,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         self.server = server
 
+        LogStore.shared.info("Tunnel start requested for \(server.name) @ \(server.address):\(server.port)", tag: "Tunnel")
+
+        // CRITICAL: we must NOT install tunnel network settings if the xray
+        // engine isn't available — otherwise iOS routes all traffic into a
+        // black hole and the user's internet just dies. Refuse early.
+        guard xray.isAvailable else {
+            LogStore.shared.error("Refusing to start tunnel: libXray binary is not bundled", tag: "Tunnel")
+            throw NSError(domain: "PacketTunnelProvider", code: 100,
+                          userInfo: [NSLocalizedDescriptionKey: "VPN-движок (libXray) не подключён к сборке. Tunnel не запущен, чтобы не сломать интернет. См. логи."])
+        }
+
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: server.address)
         settings.mtu = 1500
 

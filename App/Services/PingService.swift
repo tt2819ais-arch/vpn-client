@@ -25,41 +25,84 @@ public actor PingService {
         }
     }
 
-    // MARK: – TCP
+    // MARK: – TCP (real handshake RTT via POSIX socket)
 
     private func tcpPing(host: String, port: Int, timeout: TimeInterval = 4) async -> PingResult {
         await withCheckedContinuation { continuation in
-            let started = Date()
-            let conn = NWConnection(
-                host: NWEndpoint.Host(host),
-                port: NWEndpoint.Port(integerLiteral: UInt16(port)),
-                using: .tcp
-            )
-
-            let resumeOnce = OnceResumer(continuation: continuation)
-            let queue = DispatchQueue(label: "ping.tcp.\(host).\(port)")
-
-            conn.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    let ms = Int(Date().timeIntervalSince(started) * 1000)
-                    conn.cancel()
-                    resumeOnce.resume(.init(latencyMs: ms, error: nil, measuredAt: Date()))
-                case .failed(let err):
-                    conn.cancel()
-                    resumeOnce.resume(.init(latencyMs: nil, error: err.localizedDescription, measuredAt: Date()))
-                case .cancelled:
-                    resumeOnce.resume(.init(latencyMs: nil, error: "cancelled", measuredAt: Date()))
-                default: break
-                }
-            }
-            conn.start(queue: queue)
-
-            queue.asyncAfter(deadline: .now() + timeout) {
-                conn.cancel()
-                resumeOnce.resume(.init(latencyMs: nil, error: "timeout", measuredAt: Date()))
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Self.posixTcpPing(host: host, port: port, timeout: timeout)
+                continuation.resume(returning: result)
             }
         }
+    }
+
+    /// Resolves the host, then non-blocking connect()+poll() to measure the real
+    /// SYN→SYN-ACK round-trip. NWConnection's `.ready` state can fire well
+    /// before the kernel actually completes the handshake on cellular, which
+    /// produces unrealistic 0–1 ms readings — so we go to BSD sockets.
+    private static func posixTcpPing(host: String, port: Int, timeout: TimeInterval) -> PingResult {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+
+        var res: UnsafeMutablePointer<addrinfo>? = nil
+        let status = getaddrinfo(host, String(port), &hints, &res)
+        guard status == 0, let info = res else {
+            return PingResult(latencyMs: nil, error: "DNS \(host) failed", measuredAt: Date())
+        }
+        defer { freeaddrinfo(info) }
+
+        let fd = socket(info.pointee.ai_family,
+                        info.pointee.ai_socktype,
+                        info.pointee.ai_protocol)
+        guard fd >= 0 else {
+            return PingResult(latencyMs: nil, error: "socket() failed", measuredAt: Date())
+        }
+        defer { close(fd) }
+
+        // Non-blocking
+        let oldFlags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, oldFlags | O_NONBLOCK)
+
+        let started = Date()
+        let connectResult = connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen)
+
+        if connectResult == 0 {
+            let ms = Int((Date().timeIntervalSince(started) * 1000).rounded())
+            return PingResult(latencyMs: ms, error: nil, measuredAt: Date())
+        }
+
+        if errno != EINPROGRESS {
+            let msg = String(cString: strerror(errno))
+            return PingResult(latencyMs: nil, error: "connect: \(msg)", measuredAt: Date())
+        }
+
+        // Wait for writability (= handshake completion) or timeout.
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let polled = poll(&pfd, 1, Int32(timeout * 1000))
+
+        if polled == 0 {
+            return PingResult(latencyMs: nil, error: "timeout", measuredAt: Date())
+        }
+        if polled < 0 {
+            let msg = String(cString: strerror(errno))
+            return PingResult(latencyMs: nil, error: "poll: \(msg)", measuredAt: Date())
+        }
+
+        // Inspect SO_ERROR: zero means the handshake actually succeeded.
+        var soerr: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &len)
+        if soerr != 0 {
+            let msg = String(cString: strerror(soerr))
+            return PingResult(latencyMs: nil, error: "tcp: \(msg)", measuredAt: Date())
+        }
+
+        let ms = Int((Date().timeIntervalSince(started) * 1000).rounded())
+        // Anything claiming sub-millisecond on a remote host is a measurement
+        // glitch; clamp to 1 so the UI doesn't show "0 мс".
+        return PingResult(latencyMs: max(ms, 1), error: nil, measuredAt: Date())
     }
 
     // MARK: – HTTP
