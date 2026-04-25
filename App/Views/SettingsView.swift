@@ -82,6 +82,17 @@ struct SettingsView: View {
                     Text("О приложении")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    StarfieldView(density: 0.00006, speed: 6...22, aurora: true)
+                        .opacity(0.55)
+                        .ignoresSafeArea()
+                }
+            }
+            .preferredColorScheme(.dark)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .navigationTitle("Настройки")
         }
     }

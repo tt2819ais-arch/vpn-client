@@ -32,6 +32,32 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Cache LibXray.xcframework
+        id: cache-libxray
+        uses: actions/cache@v4
+        with:
+          path: Vendor/LibXray.xcframework
+          key: libxray-xcframework-${{ env.LIBXRAY_VERSION }}
+        env:
+          LIBXRAY_VERSION: 26.1.23
+
+      - name: Download LibXray.xcframework
+        if: steps.cache-libxray.outputs.cache-hit != 'true'
+        env:
+          LIBXRAY_VERSION: 26.1.23
+        run: |
+          set -e
+          mkdir -p Vendor
+          echo "Downloading LibXray.xcframework v$LIBXRAY_VERSION (~300MB)..."
+          curl -sL --fail \
+            "https://github.com/wanliyunyan/LibXray/releases/download/${LIBXRAY_VERSION}/LibXray.xcframework.zip" \
+            -o Vendor/LibXray.xcframework.zip
+          unzip -q Vendor/LibXray.xcframework.zip -d Vendor/
+          rm Vendor/LibXray.xcframework.zip
+          echo "LibXray vendored at:"
+          ls -la Vendor/LibXray.xcframework/
+          du -sh Vendor/LibXray.xcframework
+
       - name: Generate Xcode project
         run: xcodegen generate
 

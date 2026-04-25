@@ -1,123 +1,97 @@
 import Foundation
-import Darwin
 import os.log
 
-/// Thin wrapper around the libXray Go bindings.
+#if canImport(LibXray)
+import LibXray
+#endif
+
+/// Bridges the PacketTunnelProvider to the libXray Go bindings.
 ///
-/// The PacketTunnelProvider drives this controller. We try to bind to
-/// `LibXray` (XCFramework from https://github.com/XTLS/libXray) when present;
-/// otherwise we degrade to a stub that still completes start/stop calls without
-/// crashing — useful for dev builds before the binary framework has been
-/// vendored. Replace `LibXrayBackend` with the real bridge once the framework
-/// is wired up (see README "Vendoring libXray").
+/// The xcframework is embedded at build time (CI downloads it from
+/// `wanliyunyan/LibXray` releases — see `.github/workflows/ios.yml` and
+/// `project.yml`). At call time we hand JSON config to LibXray which boots
+/// an in-process Xray-core instance with our VLESS+Reality outbound.
 final class XrayController {
 
     private let log = OSLog(subsystem: "com.tt2819ais.vpnclient.tunnel", category: "xray")
-    private let backend: XrayBackend
+    private var lastRxBytes: UInt64 = 0
+    private var lastTxBytes: UInt64 = 0
+    private var lastSampleAt: Date = .distantPast
+    private var running: Bool = false
 
-    init(backend: XrayBackend = LibXrayBackend()) {
-        self.backend = backend
+    /// `true` when the LibXray module is linked. Always true in shipped
+    /// builds — left as a property so callers can keep the existing
+    /// `guard xray.isAvailable` style check.
+    var isAvailable: Bool {
+        #if canImport(LibXray)
+        return true
+        #else
+        return false
+        #endif
     }
 
-    /// Whether the libXray binary is wired up. When false the tunnel must
-    /// refuse to install network settings — capturing all traffic without a
-    /// functional engine would simply break the user's internet.
-    var isAvailable: Bool { backend.isAvailable }
-
+    /// Starts an xray-core instance with the given JSON configuration.
+    /// `dataDir` is used by xray for geo-data and runtime files.
     func start(configJSON: String, dataDir: URL) throws {
+        #if canImport(LibXray)
+        try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         let configPath = dataDir.appendingPathComponent("config.json")
         try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
 
         os_log("Starting xray-core with config at %{public}@", log: log, type: .info, configPath.path)
-        LogStore.shared.info("xray-core start config=\(configPath.lastPathComponent)", tag: "Tunnel")
-        try backend.start(configPath: configPath.path, dataDir: dataDir.path)
+        LogStore.shared.info("xray-core booting (config=\(configPath.lastPathComponent))", tag: "Tunnel")
+
+        // libXray's RunXrayFromJSON wants a base64-encoded request envelope:
+        //   { "datDir": "...", "configJSON": "...stringified..." }
+        // The helper LibXrayNewXrayRunFromJSONRequest does that for us.
+        var nsErr: NSError?
+        let envelope = LibXrayNewXrayRunFromJSONRequest(dataDir.path, configJSON, &nsErr)
+        if let nsErr {
+            LogStore.shared.error("LibXray request build failed: \(nsErr.localizedDescription)", tag: "Tunnel")
+            throw nsErr
+        }
+        let resp = LibXrayRunXrayFromJSON(envelope)
+        try Self.throwIfNotSuccess(resp, op: "RunXrayFromJSON")
+        running = true
+
+        let version = LibXrayXrayVersion()
+        LogStore.shared.info("xray-core started (version=\(version))", tag: "Tunnel")
+        #else
+        LogStore.shared.error("LibXray module not available — extension was built without the xcframework", tag: "Tunnel")
+        throw NSError(domain: "XrayController", code: 100,
+                      userInfo: [NSLocalizedDescriptionKey: "LibXray не слинкован в эту сборку extension'а"])
+        #endif
     }
 
     func stop() {
-        backend.stop()
+        #if canImport(LibXray)
+        guard running else { return }
+        let resp = LibXrayStopXray()
+        running = false
+        if let parsed = Self.parseResponse(resp), parsed.success == false {
+            LogStore.shared.error("xray-core stop reported failure: \(parsed.error ?? "?")", tag: "Tunnel")
+        } else {
+            LogStore.shared.info("xray-core stopped", tag: "Tunnel")
+        }
+        #endif
     }
 
     func queryStats() -> TrafficStats {
-        backend.queryStats()
-    }
-}
-
-// MARK: – Backend abstraction
-
-protocol XrayBackend {
-    var isAvailable: Bool { get }
-    func start(configPath: String, dataDir: String) throws
-    func stop()
-    func queryStats() -> TrafficStats
-}
-
-/// Default backend: tries to call into the libXray XCFramework via dynamic
-/// symbol lookup so the project still links if the framework is missing.
-final class LibXrayBackend: XrayBackend {
-
-    private let log = OSLog(subsystem: "com.tt2819ais.vpnclient.tunnel", category: "libxray")
-    private var lastRxBytes: UInt64 = 0
-    private var lastTxBytes: UInt64 = 0
-    private var lastSampleAt: Date = .distantPast
-
-    var isAvailable: Bool { dynamicSymbol(named: "LibXrayRun") != nil }
-
-    func start(configPath: String, dataDir: String) throws {
-        // libXray exposes `LibXrayRun(base64(json{datadir, configPath}))`.
-        // We dlsym to avoid a hard link dependency at build time so the project
-        // builds in CI even before the binary framework is vendored.
-        guard let runFn = dynamicSymbol(named: "LibXrayRun") else {
-            os_log("LibXrayRun not found — libXray binary missing", log: log, type: .error)
-            LogStore.shared.error("LibXrayRun symbol not found — libXray.xcframework not bundled", tag: "Tunnel")
-            throw NSError(domain: "LibXrayBackend", code: 100,
-                          userInfo: [NSLocalizedDescriptionKey: "VPN-движок (libXray) не подключён в этой сборке. См. README \u{00BB} Vendoring libXray."])
-        }
-        let request: [String: String] = [
-            "datDir": dataDir,
-            "configPath": configPath
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: request),
-              let b64 = String(data: data.base64EncodedData(), encoding: .utf8) else {
-            throw NSError(domain: "LibXrayBackend", code: 2)
-        }
-
-        typealias RunFn = @convention(c) (UnsafePointer<CChar>) -> UnsafePointer<CChar>?
-        let cFn = unsafeBitCast(runFn, to: RunFn.self)
-        let result = b64.withCString { cFn($0) }
-        if let result, let s = String(validatingUTF8: result) {
-            os_log("LibXrayRun returned %{public}@", log: log, type: .info, s)
-            if s.contains("\"success\":false") {
-                throw NSError(domain: "LibXrayBackend", code: 3,
-                              userInfo: [NSLocalizedDescriptionKey: s])
-            }
-        }
-    }
-
-    func stop() {
-        guard let stopFn = dynamicSymbol(named: "LibXrayStop") else { return }
-        typealias StopFn = @convention(c) () -> UnsafePointer<CChar>?
-        let cFn = unsafeBitCast(stopFn, to: StopFn.self)
-        _ = cFn()
-    }
-
-    func queryStats() -> TrafficStats {
-        guard let queryFn = dynamicSymbol(named: "LibXrayQueryStats") else {
-            return .zero
-        }
-        typealias QueryFn = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>) -> UnsafePointer<CChar>?
-        let cFn = unsafeBitCast(queryFn, to: QueryFn.self)
-
-        guard let response = "direct".withCString({ direct in
-            "proxy".withCString { proxy in
-                cFn(direct, proxy)
-            }
-        }), let json = String(validatingUTF8: response),
-           let data = json.data(using: .utf8),
-           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #if canImport(LibXray)
+        // Build the base64 envelope: { "server": "127.0.0.1:49227", ... }.
+        // LibXray expects metrics endpoint to be running; if not it returns
+        // an error response which we treat as zero stats (typical when the
+        // user disabled metrics in their config).
+        guard let envelope = makeQueryEnvelope() else { return .zero }
+        let resp = LibXrayQueryStats(envelope)
+        guard let parsed = Self.parseResponse(resp), parsed.success == true,
+              let dataB64 = parsed.dataBase64,
+              let dataBytes = Data(base64Encoded: dataB64),
+              let json = try? JSONSerialization.jsonObject(with: dataBytes) as? [String: Any]
         else { return .zero }
 
-        let rx = (dict["downlink"] as? UInt64) ?? UInt64((dict["downlink"] as? Int) ?? 0)
-        let tx = (dict["uplink"] as? UInt64) ?? UInt64((dict["uplink"] as? Int) ?? 0)
+        let rx = (json["downlink"] as? UInt64) ?? UInt64((json["downlink"] as? Int) ?? 0)
+        let tx = (json["uplink"]   as? UInt64) ?? UInt64((json["uplink"]   as? Int) ?? 0)
         let now = Date()
         let dt = max(now.timeIntervalSince(lastSampleAt), 0.001)
         let rxRate = lastSampleAt == .distantPast ? 0 : UInt64(Double(rx &- lastRxBytes) / dt)
@@ -126,12 +100,46 @@ final class LibXrayBackend: XrayBackend {
         lastTxBytes = tx
         lastSampleAt = now
         return TrafficStats(rxBytes: rx, txBytes: tx, rxRateBps: rxRate, txRateBps: txRate)
+        #else
+        return .zero
+        #endif
     }
 
-    private func dynamicSymbol(named name: String) -> UnsafeMutableRawPointer? {
-        // RTLD_DEFAULT (-2) is the special handle that searches all loaded images,
-        // which lets us link successfully even if libXray is not embedded yet.
-        let handle = UnsafeMutableRawPointer(bitPattern: -2)
-        return dlsym(handle, name)
+    // MARK: – LibXray response helpers
+
+    private struct LibXrayResponse {
+        let success: Bool?
+        let error: String?
+        let dataBase64: String?
+    }
+
+    private static func parseResponse(_ raw: String) -> LibXrayResponse? {
+        guard let data = raw.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return LibXrayResponse(
+            success: dict["success"] as? Bool,
+            error: dict["error"] as? String,
+            dataBase64: dict["data"] as? String
+        )
+    }
+
+    private static func throwIfNotSuccess(_ raw: String, op: String) throws {
+        guard let parsed = parseResponse(raw) else {
+            throw NSError(domain: "XrayController", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Не удалось разобрать ответ LibXray (\(op)): \(raw.prefix(180))"])
+        }
+        if parsed.success == false {
+            let msg = parsed.error ?? "(no error message)"
+            LogStore.shared.error("\(op) failed: \(msg)", tag: "Tunnel")
+            throw NSError(domain: "XrayController", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "xray-core: \(msg)"])
+        }
+    }
+
+    private func makeQueryEnvelope() -> String? {
+        let payload: [String: Any] = ["server": "127.0.0.1:49227", "reset": false]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return data.base64EncodedString()
     }
 }

@@ -23,11 +23,13 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     OTHER_LDFLAGS: "-ObjC"
 
-# NOTE: libXray (XTLS/libXray) is *not* declared as a Swift Package dependency.
-# We bind to its symbols at runtime via dlsym in PacketTunnel/XrayController.swift,
-# so the project builds cleanly in CI without a binary framework. Drop the
-# vendored LibXray.xcframework into Vendor/LibXray.xcframework and add it to the
-# PacketTunnel target in Xcode after generating the project; see README.
+# LibXray is vendored as a binary xcframework at Vendor/LibXray.xcframework.
+# CI downloads it from the public wanliyunyan/LibXray release; locally, drop
+# the same xcframework into Vendor/. The framework is embedded into both the
+# main app and the PacketTunnel extension. The extension is the actual user
+# of LibXray (it boots an in-process Xray instance to terminate VLESS+Reality
+# tunnels); the main app embeds it for symbol lookup convenience and also
+# because iOS requires extension-embedded frameworks to be present in the host.
 
 targets:
   VPNClient:
@@ -84,6 +86,9 @@ targets:
       - target: VPNClientWidget
         embed: true
         codeSign: true
+      - framework: Vendor/LibXray.xcframework
+        embed: true
+        codeSign: true
       - sdk: NetworkExtension.framework
       - sdk: WidgetKit.framework
       - sdk: AppIntents.framework
@@ -118,6 +123,8 @@ targets:
           - group.com.tt2819ais.vpnclient
     dependencies:
       - sdk: NetworkExtension.framework
+      - framework: Vendor/LibXray.xcframework
+        embed: false   # main app embeds; extension just links
 
   VPNClientWidget:
     type: app-extension

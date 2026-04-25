@@ -10,25 +10,34 @@ struct LogsView: View {
     @State private var refreshTask: Task<Void, Never>? = nil
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                Text(text.isEmpty ? "Логи пусты." : text)
-                    .font(.system(.footnote, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .textSelection(.enabled)
-                    .id("logs-end")
-            }
-            .onAppear {
-                reload()
-                proxy.scrollTo("logs-end", anchor: .bottom)
-            }
-            .onDisappear {
-                refreshTask?.cancel()
-                refreshTask = nil
+        ZStack {
+            Color.black.ignoresSafeArea()
+            StarfieldView(density: 0.00005, speed: 6...18, aurora: true)
+                .opacity(0.45)
+                .ignoresSafeArea()
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(text.isEmpty ? "Логи пусты." : text)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .textSelection(.enabled)
+                        .id("logs-end")
+                }
+                .onAppear {
+                    reload()
+                    proxy.scrollTo("logs-end", anchor: .bottom)
+                }
+                .onDisappear {
+                    refreshTask?.cancel()
+                    refreshTask = nil
+                }
             }
         }
-        .background(Color(.systemBackground))
+        .preferredColorScheme(.dark)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .navigationTitle("Логи")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

@@ -78,14 +78,31 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                           userInfo: [NSLocalizedDescriptionKey: "VPN-движок (libXray) не подключён к сборке. Tunnel не запущен, чтобы не сломать интернет. См. логи."])
         }
 
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: server.address)
-        settings.mtu = 1500
+        // Start xray-core FIRST so the local SOCKS/HTTP inbounds are listening
+        // before iOS hands traffic to the proxy. If xray fails, we abort
+        // *before* committing tunnel settings so the user's internet stays
+        // healthy.
+        let dataDir = AppGroup.containerURL.appendingPathComponent("xray", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
-        let ipv4 = NEIPv4Settings(addresses: ["10.10.0.2"], subnetMasks: ["255.255.255.0"])
-        ipv4.includedRoutes = [NEIPv4Route.default()]
-        ipv4.excludedRoutes = [
-            NEIPv4Route(destinationAddress: server.address, subnetMask: "255.255.255.255")
-        ]
+        let configJSON = try XrayConfigBuilder.jsonString(for: server, dataDir: dataDir)
+        LogStore.shared.debug("xray config size: \(configJSON.count) bytes", tag: "Tunnel")
+        try xray.start(configJSON: configJSON, dataDir: dataDir)
+        LogStore.shared.info("xray inbound: socks=127.0.0.1:10808 http=127.0.0.1:10809", tag: "Tunnel")
+
+        // Build network settings.
+        // We do NOT install a default IPv4 route — that would capture every
+        // packet at the IP layer, but we don't have a tun2socks bridge to
+        // forward those packets to xray, so they would fall into a black
+        // hole and the user's internet would die. Instead we use proxy
+        // mode: iOS routes HTTP/HTTPS-aware app traffic to xray's local
+        // HTTP inbound on 127.0.0.1:10809.
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: server.address)
+        settings.mtu = 1400
+
+        let ipv4 = NEIPv4Settings(addresses: ["198.18.0.2"], subnetMasks: ["255.255.255.255"])
+        ipv4.includedRoutes = []   // intentionally empty — see comment above
+        ipv4.excludedRoutes = [NEIPv4Route.default()]
         settings.ipv4Settings = ipv4
 
         let dns = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8"])
@@ -98,17 +115,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         proxy.httpsEnabled = true
         proxy.httpsServer = NEProxyServer(address: "127.0.0.1", port: 10809)
         proxy.matchDomains = [""]
-        proxy.excludeSimpleHostnames = true
+        proxy.excludeSimpleHostnames = false
         settings.proxySettings = proxy
 
         try await applyTunnelSettings(settings)
-
-        // Start xray-core
-        let dataDir = AppGroup.containerURL.appendingPathComponent("xray", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
-
-        let configJSON = try XrayConfigBuilder.jsonString(for: server, dataDir: dataDir)
-        try xray.start(configJSON: configJSON, dataDir: dataDir)
+        LogStore.shared.info("Tunnel network settings installed (proxy mode)", tag: "Tunnel")
         self.startedAt = Date()
 
         let info = ConnectionInfo(state: .connected, serverID: server.id,

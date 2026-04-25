@@ -33,8 +33,9 @@ struct VPNClientApp: App {
     }
 
     private func dismissSplashAfterDelay() async {
-        // Total splash budget: ~2.7s — visible content ~2.0s + fade.
-        try? await Task.sleep(nanoseconds: 2_700_000_000)
+        // Total splash budget: ~3.5s — gives the user time to read the
+        // randomly-picked welcome line.
+        try? await Task.sleep(nanoseconds: 3_500_000_000)
         await MainActor.run {
             withAnimation(.easeInOut(duration: 0.6)) {
                 showSplash = false
