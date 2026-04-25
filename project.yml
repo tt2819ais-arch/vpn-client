@@ -44,7 +44,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: VPN Client
+        CFBundleDisplayName: VPN v2 BLACK
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen:
