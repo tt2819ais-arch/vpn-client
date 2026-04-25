@@ -68,6 +68,17 @@ public final class LogStore: @unchecked Sendable {
         }
     }
 
+    /// Synchronous variant — guarantees the line is on disk before returning.
+    /// Use from the PacketTunnel extension's boot path so we never lose
+    /// breadcrumbs when iOS tears the extension down mid-launch.
+    public func logSync(_ message: String, level: Level = .info, tag: String = "App") {
+        let entry = Entry(level: level, tag: tag, message: message)
+        let line = entry.formatted + "\n"
+        queue.sync { [self] in
+            self.append(line: line)
+        }
+    }
+
     public func debug(_ message: String, tag: String = "App") { log(message, level: .debug, tag: tag) }
     public func info(_ message: String,  tag: String = "App") { log(message, level: .info,  tag: tag) }
     public func warn(_ message: String,  tag: String = "App") { log(message, level: .warn,  tag: tag) }

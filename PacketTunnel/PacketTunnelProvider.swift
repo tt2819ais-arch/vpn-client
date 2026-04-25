@@ -11,14 +11,33 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var server: Server?
     private var startedAt: Date?
 
+    override init() {
+        super.init()
+        // EARLIEST possible breadcrumb. If we don't see this in the LogStore,
+        // the extension binary failed to load (signature mismatch, missing
+        // entitlement, OOM-on-launch with libXray, etc).
+        NSLog("[VPNClient.Tunnel] PacketTunnelProvider init — extension binary loaded")
+        os_log("PacketTunnelProvider init", log: log, type: .info)
+        let containerPath = AppGroup.containerURL.path
+        LogStore.shared.logSync(
+            "Extension instance created. AppGroup container=\(containerPath). LibXray.isAvailable=\(xray.isAvailable)",
+            level: .info, tag: "Tunnel"
+        )
+    }
+
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
-        os_log("startTunnel", log: log, type: .info)
+        NSLog("[VPNClient.Tunnel] startTunnel called options=%@", String(describing: options))
+        os_log("startTunnel called", log: log, type: .info)
+        LogStore.shared.logSync("startTunnel called by iOS", level: .info, tag: "Tunnel")
         Task {
             do {
                 try await self.startTunnelInternal()
+                LogStore.shared.info("startTunnel completed successfully", tag: "Tunnel")
                 completionHandler(nil)
             } catch {
                 os_log("startTunnel failed: %{public}@", log: log, type: .error, "\(error)")
+                NSLog("[VPNClient.Tunnel] startTunnel failed: %@", "\(error)")
+                LogStore.shared.error("startTunnel failed: \(error.localizedDescription)", tag: "Tunnel")
                 completionHandler(error)
             }
         }

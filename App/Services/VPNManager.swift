@@ -22,6 +22,24 @@ public final class VPNManager: ObservableObject {
             guard let conn = note.object as? NEVPNConnection else { return }
             Task { @MainActor [weak self] in
                 self?.update(from: conn.status)
+                if conn.status == .disconnected {
+                    self?.captureLastDisconnectError(from: conn)
+                }
+            }
+        }
+    }
+
+    /// Ask iOS for the most recent disconnect error and dump it into the log.
+    /// This is the only way to see why the extension refused to start when
+    /// `startVPNTunnel()` itself returned successfully.
+    private func captureLastDisconnectError(from conn: NEVPNConnection) {
+        if #available(iOS 16.0, *) {
+            conn.fetchLastDisconnectError { err in
+                guard let err = err as NSError? else { return }
+                LogStore.shared.error(
+                    "Last disconnect error: domain=\(err.domain) code=\(err.code) — \(err.localizedDescription) — userInfo=\(err.userInfo)",
+                    tag: "VPN"
+                )
             }
         }
     }
