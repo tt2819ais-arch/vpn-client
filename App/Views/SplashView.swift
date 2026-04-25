@@ -42,7 +42,7 @@ struct SplashView: View {
 
                 Image(systemName: "shield.lefthalf.filled.badge.checkmark")
                     .font(.system(size: 64, weight: .semibold))
-                    .foregroundStyle(.white, .accentColor)
+                    .foregroundStyle(Color.white, Color.accentColor)
                     .opacity(titleOpacity)
                     .offset(y: titleOffset * -1)
                     .padding(.bottom, 8)

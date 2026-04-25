@@ -23,7 +23,7 @@ struct RootView: View {
                 }
                 .tag(AppTab.settings)
         }
-        .tint(.accentColor)
+        .tint(Color.accentColor)
     }
 }
 
