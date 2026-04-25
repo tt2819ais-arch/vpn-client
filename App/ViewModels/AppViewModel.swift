@@ -22,6 +22,9 @@ final class AppViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var statsTimer: Timer?
+    /// Timestamp when the last `connect()` started — used to detect fast
+    /// flaps (connecting → disconnected within 2s = tunnel-side failure).
+    private var lastConnectStartedAt: Date?
 
     init(
         serverStore: ServerStore = .shared,
@@ -68,6 +71,7 @@ final class AppViewModel: ObservableObject {
                 LogStore.shared.info("Disconnected successfully", tag: "VPN")
             } else {
                 LogStore.shared.info("User pressed: CONNECT to \(server.name) [\(server.address):\(server.port)]", tag: "User")
+                lastConnectStartedAt = Date()
                 try await vpnManager.connect(to: server)
                 haptics.notify(.success, enabled: settings.hapticsEnabled)
                 LogStore.shared.info("Connect call returned, awaiting state", tag: "VPN")
@@ -142,18 +146,35 @@ final class AppViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
                 guard let self else { return }
-                if self.connection.state != state {
+                let previous = self.connection.state
+                if previous != state {
                     LogStore.shared.info("VPN state -> \(state.rawValue)", tag: "VPN")
                 }
                 self.connection.state = state
                 if state == .connected, self.connection.connectedSince == nil {
                     self.connection.connectedSince = Date()
+                    self.lastConnectStartedAt = nil
                 }
                 if !state.isActive {
                     self.connection.connectedSince = nil
                     self.connection.stats = .zero
                 }
                 AppGroup.defaults.encoded(self.connection, for: .connectionInfo)
+
+                // Tunnel-side failure detection: if we transitioned
+                // connecting → disconnected within 2 seconds of the user
+                // pressing connect, the extension threw on startup. iOS
+                // doesn't surface that error to the host app, so we surface
+                // it ourselves.
+                if previous == .connecting, state == .disconnected,
+                   let started = self.lastConnectStartedAt,
+                   Date().timeIntervalSince(started) < 2.0 {
+                    self.lastConnectStartedAt = nil
+                    let msg = "VPN-туннель не запустился. Скорее всего, libXray не подключён к сборке (см. логи Tunnel)."
+                    self.lastError = msg
+                    LogStore.shared.error("Fast flap detected (\(String(format: "%.2f", Date().timeIntervalSince(started)))s) — surfacing tunnel failure", tag: "VPN")
+                    self.haptics.notify(.error, enabled: self.settings.hapticsEnabled)
+                }
             }
             .store(in: &cancellables)
     }

@@ -3,68 +3,44 @@ import SwiftUI
 import UIKit
 #endif
 
-/// Branded banner that appears in the extra top space iOS exposes when the
-/// user activates Reachability (swipe-down on the home indicator).
+/// Branded banner that appears in the empty space iOS exposes when the user
+/// activates Reachability (swipe-down on the home indicator).
 ///
-/// Implementation: a full-window UIViewControllerRepresentable installed as a
-/// `.background` of the content. Because that representable spans the whole
-/// window (it ignores safe areas itself), `viewSafeAreaInsetsDidChange` always
-/// fires with the *true* window safe-area inset. We compare against the device
-/// baseline captured on first appearance and show the banner whenever the
-/// inset jumps significantly (Reachability adds ≈ half-screen of empty space
-/// at the top — ~250pt+ — but we only need a much smaller delta to trigger).
+/// On iPhones with a notch / Dynamic Island (X and later), Reachability is
+/// implemented by translating the key `UIWindow` downwards via `transform.ty`,
+/// **not** by changing `safeAreaInsets`. So we drive a `CADisplayLink`-backed
+/// observer that polls the window's transform and bounds every frame and
+/// publishes the offset. When the offset crosses ~50pt we render the banner
+/// in the freshly-revealed top space.
+///
+/// This component is intentionally chatty in the log — it emits the current
+/// transform / bounds values whenever they change so we can debug in the
+/// field on devices we don't have.
 struct ReachabilityBannerHost<Content: View>: View {
     @ViewBuilder var content: Content
 
-    @State private var topInset: CGFloat = 0
-    @State private var baselineTopInset: CGFloat = -1
-    @State private var isVisible: Bool = false
-
-    /// Reachability adds well over 200pt of inset — anything above ~24pt over
-    /// the baseline is unambiguously Reachability (StatusBar phone-call banner
-    /// is only ~20pt and we ignore it intentionally).
-    private let activationDelta: CGFloat = 24
+    @StateObject private var observer = ReachabilityObserver()
 
     var body: some View {
         ZStack(alignment: .top) {
             content
-                .background(
-                    SafeAreaInsetsReader(topInset: $topInset)
-                        .ignoresSafeArea(.all)
-                        .allowsHitTesting(false)
-                )
 
-            if isVisible {
-                ReachabilityBanner(extraHeight: max(0, topInset - max(baselineTopInset, 0)))
+            if observer.isActive {
+                ReachabilityBanner(height: max(observer.offset, 64))
+                    .frame(height: max(observer.offset, 64))
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .ignoresSafeArea(.all, edges: .top)
                     .zIndex(2)
             }
         }
-        .onChange(of: topInset) { newValue in
-            if baselineTopInset < 0 {
-                baselineTopInset = newValue
-                LogStore.shared.debug("Reachability baseline = \(Int(newValue))pt", tag: "Reachability")
-                return
-            }
-            // Track the smallest observed inset as the baseline (handles
-            // rotation, multitasking, status bar changes).
-            if newValue < baselineTopInset {
-                baselineTopInset = newValue
-            }
-            let active = (newValue - baselineTopInset) > activationDelta
-            if active != isVisible {
-                LogStore.shared.info("Reachability \(active ? "ON" : "OFF") (top inset \(Int(newValue))pt, baseline \(Int(baselineTopInset))pt)", tag: "Reachability")
-            }
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.85)) {
-                isVisible = active
-            }
-        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.85), value: observer.isActive)
+        .onAppear { observer.start() }
+        .onDisappear { observer.stop() }
     }
 }
 
 private struct ReachabilityBanner: View {
-    let extraHeight: CGFloat
+    let height: CGFloat
 
     var body: some View {
         ZStack {
@@ -84,62 +60,99 @@ private struct ReachabilityBanner: View {
                     .foregroundStyle(Color.white)
                     .shadow(color: Color.black.opacity(0.25), radius: 1, y: 1)
             }
+            .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: max(extraHeight, 64))
+        .frame(height: height, alignment: .bottom)
     }
 }
 
 #if canImport(UIKit)
-private struct SafeAreaInsetsReader: UIViewControllerRepresentable {
-    @Binding var topInset: CGFloat
+@MainActor
+private final class ReachabilityObserver: ObservableObject {
+    @Published var isActive: Bool = false
+    @Published var offset: CGFloat = 0
 
-    func makeUIViewController(context: Context) -> InsetReadingController {
-        let vc = InsetReadingController()
-        vc.onChange = { value in
-            DispatchQueue.main.async {
-                if abs(self.topInset - value) > 0.5 {
-                    self.topInset = value
-                }
-            }
+    private var displayLink: CADisplayLink?
+    private var lastReportedTy: CGFloat = -1
+    private var lastReportedBoundsY: CGFloat = -1
+    private var lastReportedFrameY: CGFloat = -1
+    private let activationThreshold: CGFloat = 50
+
+    func start() {
+        guard displayLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.preferredFramesPerSecond = 6   // 6 Hz is plenty — Reachability is a slow user gesture
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+        LogStore.shared.debug("ReachabilityObserver started", tag: "Reachability")
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func tick() {
+        guard let window = Self.keyWindow else { return }
+
+        let ty = window.transform.ty
+        let boundsY = window.bounds.origin.y
+        let frameY = window.frame.origin.y
+
+        // Log whenever any of the three meaningful values shift — helps debug
+        // which mechanism iOS is actually using on a given device.
+        let tyChanged = abs(ty - lastReportedTy) > 1
+        let boundsChanged = abs(boundsY - lastReportedBoundsY) > 1
+        let frameChanged = abs(frameY - lastReportedFrameY) > 1
+
+        if tyChanged || boundsChanged || frameChanged {
+            LogStore.shared.debug(
+                "Window probe: transform.ty=\(Int(ty)) bounds.y=\(Int(boundsY)) frame.y=\(Int(frameY))",
+                tag: "Reachability"
+            )
+            lastReportedTy = ty
+            lastReportedBoundsY = boundsY
+            lastReportedFrameY = frameY
         }
-        return vc
+
+        // Reachability shifts content down. On notch iPhones (X+ incl. 11),
+        // it sets `window.transform.ty` to a positive value (~half-screen).
+        // On older phones it adjusts `frame.origin.y`. Take whichever is
+        // largest and treat as the offset.
+        let candidateOffset = max(ty, frameY, -boundsY, 0)
+        let active = candidateOffset > activationThreshold
+
+        if active != isActive {
+            LogStore.shared.info(
+                "Reachability \(active ? "ON" : "OFF") (offset \(Int(candidateOffset))pt)",
+                tag: "Reachability"
+            )
+            isActive = active
+        }
+        if active {
+            offset = candidateOffset
+        } else if offset != 0 {
+            offset = 0
+        }
     }
 
-    func updateUIViewController(_ uiViewController: InsetReadingController, context: Context) {}
-}
-
-private final class InsetReadingController: UIViewController {
-    var onChange: ((CGFloat) -> Void)?
-
-    override func loadView() {
-        let v = UIView()
-        v.backgroundColor = .clear
-        v.isUserInteractionEnabled = false
-        view = v
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        edgesForExtendedLayout = .all
-        extendedLayoutIncludesOpaqueBars = true
-        // Also publish current value on first appearance.
-        onChange?(view.safeAreaInsets.top)
-    }
-
-    override func viewSafeAreaInsetsDidChange() {
-        super.viewSafeAreaInsetsDidChange()
-        onChange?(view.safeAreaInsets.top)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        onChange?(view.safeAreaInsets.top)
+    private static var keyWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ??
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.windows.first }
+            .first
     }
 }
 #else
-private struct SafeAreaInsetsReader: View {
-    @Binding var topInset: CGFloat
-    var body: some View { Color.clear }
+@MainActor
+private final class ReachabilityObserver: ObservableObject {
+    @Published var isActive: Bool = false
+    @Published var offset: CGFloat = 0
+    func start() {}
+    func stop() {}
 }
 #endif

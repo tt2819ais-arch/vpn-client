@@ -1,179 +1,163 @@
 import SwiftUI
 
-/// Big circular connect button with multi-layer styling:
-/// 1. Outer angular-gradient ring (rotates while connecting)
-/// 2. Pulsing halo when connected
-/// 3. Inner radial-gradient sphere with state-driven palette
-/// 4. Glossy highlight on top, soft inner shadow
-/// 5. Power glyph that morphs between off / on / busy states
+/// Connect button in Apple "Liquid Glass" / visionOS style:
+/// - `.ultraThinMaterial` body (true blur — picks up colour from the scene
+///   behind it, sits naturally on any background)
+/// - Subtle white→clear inner border for the rim highlight
+/// - Soft outer halo that only appears while connected (very low opacity)
+/// - Single SF Symbol glyph in the centre, no decorative gradient sphere
+/// - Minimal motion: a slow rotation of an arc when busy, a gentle breathing
+///   scale when connected, otherwise completely still
 struct ConnectButton: View {
     let state: ConnectionState
     let action: () -> Void
 
-    @State private var ringRotation: Double = 0
-    @State private var pulse: CGFloat = 1.0
+    @State private var spin: Double = 0
+    @State private var breathe: CGFloat = 1.0
     @State private var pressed: Bool = false
 
-    private let size: CGFloat = 220
+    private let size: CGFloat = 196
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                // Pulsing halo (only while connected)
+                // 1. Ambient halo — barely-there glow only while connected.
                 if state == .connected {
                     Circle()
-                        .stroke(palette.glow, lineWidth: 22)
-                        .frame(width: size, height: size)
-                        .scaleEffect(pulse)
-                        .opacity(2.0 - Double(pulse))
-                        .blur(radius: 6)
+                        .fill(accent.opacity(0.18))
+                        .frame(width: size + 28, height: size + 28)
+                        .blur(radius: 22)
+                        .scaleEffect(breathe)
+                        .allowsHitTesting(false)
                 }
 
-                // Outer rotating ring
+                // 2. Glass body.
                 Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: ringColors,
-                            center: .center,
-                            startAngle: .degrees(0),
-                            endAngle: .degrees(360)
-                        ),
-                        lineWidth: 6
-                    )
+                    .fill(.ultraThinMaterial)
                     .frame(width: size, height: size)
-                    .rotationEffect(.degrees(ringRotation))
-                    .opacity(state == .disconnected || state == .failed ? 0.55 : 1.0)
-
-                // Inner sphere
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: palette.body,
-                            center: .init(x: 0.30, y: 0.30),
-                            startRadius: 4,
-                            endRadius: size * 0.65
-                        )
-                    )
-                    .frame(width: size - 26, height: size - 26)
-                    .overlay(
+                    .overlay {
+                        // 2a. Rim highlight — bright top, fading to nothing.
                         Circle()
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                            .frame(width: size - 26, height: size - 26)
-                    )
-                    .shadow(color: palette.shadow, radius: 26, x: 0, y: 8)
-
-                // Glossy highlight
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.32), Color.white.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .center
-                        )
-                    )
-                    .frame(width: size - 50, height: size - 50)
-                    .offset(y: -8)
-                    .blendMode(.plusLighter)
-                    .allowsHitTesting(false)
-
-                // Center glyph
-                Group {
-                    if state == .connecting || state == .reconnecting || state == .disconnecting {
-                        ProgressView()
-                            .controlSize(.large)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "power")
-                            .font(.system(size: 78, weight: .regular))
-                            .foregroundStyle(.white)
-                            .shadow(color: Color.black.opacity(0.35), radius: 4, y: 2)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.55),
+                                        Color.white.opacity(0.08),
+                                        Color.white.opacity(0.0),
+                                        Color.white.opacity(0.18)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
                     }
+                    .overlay {
+                        // 2b. Inner depth — accent tint while connected, neutral otherwise.
+                        Circle()
+                            .stroke(accent.opacity(state == .connected ? 0.45 : 0.0), lineWidth: 1.2)
+                            .blur(radius: 0.5)
+                            .frame(width: size - 6, height: size - 6)
+                    }
+                    .overlay {
+                        // 2c. Top gloss highlight — single linear streak, very subtle.
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.18),
+                                        Color.white.opacity(0.0)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .center
+                                )
+                            )
+                            .frame(width: size - 16, height: size - 16)
+                            .blendMode(.plusLighter)
+                            .allowsHitTesting(false)
+                    }
+                    .shadow(color: Color.black.opacity(0.35), radius: 22, y: 10)
+
+                // 3. Spinning arc while busy — very thin, subtle.
+                if isBusy {
+                    Circle()
+                        .trim(from: 0.0, to: 0.18)
+                        .stroke(
+                            accent.opacity(0.85),
+                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                        )
+                        .frame(width: size + 10, height: size + 10)
+                        .rotationEffect(.degrees(spin))
+                        .allowsHitTesting(false)
                 }
+
+                // 4. Centre glyph.
+                centerGlyph
             }
         }
         .buttonStyle(PressEffectStyle(pressed: $pressed))
-        .scaleEffect(pressed ? 0.96 : 1.0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: pressed)
-        .animation(.spring(response: 0.55, dampingFraction: 0.85), value: state)
-        .onAppear { startRotating(); startPulse() }
-        .onChange(of: state) { _ in startRotating() }
+        .scaleEffect(pressed ? 0.97 : 1.0)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: pressed)
+        .animation(.spring(response: 0.6, dampingFraction: 0.85), value: state)
+        .onAppear { startSpin(); startBreathing() }
+        .onChange(of: state) { _ in startSpin() }
         .accessibilityLabel(Text(state.localizedTitle))
+    }
+
+    // MARK: – Centre glyph
+
+    @ViewBuilder
+    private var centerGlyph: some View {
+        if isBusy {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.white)
+        } else {
+            Image(systemName: state == .connected ? "power" : "power")
+                .font(.system(size: 64, weight: .light, design: .rounded))
+                .foregroundStyle(
+                    state == .connected
+                        ? AnyShapeStyle(accent)
+                        : AnyShapeStyle(Color.white.opacity(0.92))
+                )
+                .shadow(color: Color.black.opacity(0.25), radius: 4, y: 2)
+        }
+    }
+
+    private var isBusy: Bool {
+        state == .connecting || state == .reconnecting || state == .disconnecting
+    }
+
+    // MARK: – Accent
+
+    private var accent: Color {
+        switch state {
+        case .connected:    return Color(red: 0.40, green: 0.85, blue: 0.65) // mint
+        case .failed:       return Color(red: 0.95, green: 0.42, blue: 0.42)
+        default:            return Color(red: 0.55, green: 0.78, blue: 1.0)  // soft blue
+        }
     }
 
     // MARK: – Animations
 
-    private func startRotating() {
-        // Spin while busy, stand still otherwise.
-        let busy = (state == .connecting || state == .reconnecting || state == .disconnecting)
-        if busy {
-            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                ringRotation = 360
+    private func startSpin() {
+        if isBusy {
+            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+                spin = 360
             }
         } else {
-            // Slow drift to keep it lively.
-            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
-                ringRotation = 360
+            // Stop spinning — leave at current angle, no animation.
+            withAnimation(.easeOut(duration: 0.2)) {
+                spin = 0
             }
         }
     }
 
-    private func startPulse() {
-        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-            pulse = 1.08
+    private func startBreathing() {
+        withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) {
+            breathe = 1.06
         }
     }
-
-    // MARK: – Palette
-
-    private struct Palette {
-        var body: [Color]
-        var ring: [Color]
-        var glow: Color
-        var shadow: Color
-    }
-
-    private var palette: Palette {
-        switch state {
-        case .connected:
-            return Palette(
-                body:   [Color(red: 0.16, green: 0.85, blue: 0.55),
-                         Color(red: 0.05, green: 0.45, blue: 0.32)],
-                ring:   [Color(red: 0.24, green: 0.94, blue: 0.66),
-                         Color(red: 0.06, green: 0.55, blue: 0.42),
-                         Color(red: 0.24, green: 0.94, blue: 0.66)],
-                glow:   Color(red: 0.18, green: 0.86, blue: 0.55).opacity(0.55),
-                shadow: Color(red: 0.06, green: 0.55, blue: 0.42).opacity(0.55)
-            )
-        case .connecting, .reconnecting, .disconnecting:
-            return Palette(
-                body:   [Color(red: 1.00, green: 0.65, blue: 0.20),
-                         Color(red: 0.85, green: 0.32, blue: 0.05)],
-                ring:   [Color.orange, Color.yellow, Color.orange],
-                glow:   Color.orange.opacity(0.55),
-                shadow: Color.orange.opacity(0.55)
-            )
-        case .failed:
-            return Palette(
-                body:   [Color(red: 0.95, green: 0.32, blue: 0.30),
-                         Color(red: 0.55, green: 0.12, blue: 0.12)],
-                ring:   [Color.red, Color(red: 0.85, green: 0.20, blue: 0.20), Color.red],
-                glow:   Color.red.opacity(0.55),
-                shadow: Color.red.opacity(0.55)
-            )
-        case .disconnected:
-            return Palette(
-                body:   [Color(red: 0.30, green: 0.55, blue: 1.00),
-                         Color(red: 0.10, green: 0.22, blue: 0.55)],
-                ring:   [Color(red: 0.40, green: 0.66, blue: 1.00),
-                         Color(red: 0.20, green: 0.40, blue: 0.85),
-                         Color(red: 0.40, green: 0.66, blue: 1.00)],
-                glow:   Color.accentColor.opacity(0.45),
-                shadow: Color.accentColor.opacity(0.45)
-            )
-        }
-    }
-
-    private var ringColors: [Color] { palette.ring }
 }
 
 private struct PressEffectStyle: ButtonStyle {
