@@ -47,7 +47,7 @@ private struct ServerRow: View {
                         .font(.headline)
                     if appViewModel.settings.selectedServerID == server.id {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.accent)
+                            .foregroundStyle(Color.accentColor)
                     }
                 }
                 Text("\(server.address):\(server.port) · \(server.serverName)")
