@@ -1,0 +1,39 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/
+!*.xcodeproj/project.pbxproj  # only when not generated
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.swiftpm/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+.build/
+Packages/
+Package.resolved
+Vendor/*.xcframework/
+!Vendor/.gitkeep
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Misc
+*.log
+*.tmp
