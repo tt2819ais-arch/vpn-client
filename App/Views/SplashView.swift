@@ -34,12 +34,12 @@ struct SplashView: View {
                     .font(.system(size: 64, weight: .bold))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Color.white, Color(red: 0.55, green: 0.78, blue: 1.0)],
+                            colors: [Color.white, Color(white: 0.65)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
                     )
-                    .shadow(color: Color(red: 0.4, green: 0.7, blue: 1.0).opacity(0.5), radius: 18, y: 0)
+                    .shadow(color: Color.white.opacity(0.20), radius: 18, y: 0)
                     .opacity(titleOpacity)
                     .offset(y: -titleOffset)
 
@@ -115,11 +115,14 @@ struct TelegramGlyph: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color(red: 0.15, green: 0.65, blue: 0.95),
-                                     Color(red: 0.10, green: 0.45, blue: 0.85)],
+                            colors: [Color(white: 0.20),
+                                     Color(white: 0.05)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
+                    )
+                    .overlay(
+                        Circle().stroke(Color.white.opacity(0.20), lineWidth: 1)
                     )
                 Image(systemName: "paperplane.fill")
                     .font(.system(size: s * 0.55, weight: .bold))

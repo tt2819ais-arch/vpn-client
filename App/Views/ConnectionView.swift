@@ -180,14 +180,14 @@ struct ConnectionView: View {
                 value: ByteFormat.string(stats.rxBytes),
                 rate: ByteFormat.rate(stats.rxRateBps),
                 icon: "arrow.down.circle.fill",
-                color: Color(red: 0.45, green: 0.78, blue: 1.0)
+                color: Color.white
             )
             statTile(
                 title: "Отправлено",
                 value: ByteFormat.string(stats.txBytes),
                 rate: ByteFormat.rate(stats.txRateBps),
                 icon: "arrow.up.circle.fill",
-                color: Color(red: 0.45, green: 0.92, blue: 0.66)
+                color: Color(white: 0.78)
             )
         }
     }

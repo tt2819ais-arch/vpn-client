@@ -37,10 +37,12 @@ struct StarfieldView: View {
     private func drawAurora(ctx: GraphicsContext, size: CGSize, t: TimeInterval) {
         // Two slowly-drifting radial blobs blended with .plusLighter for that
         // northern-lights feel. Centres trace gentle Lissajous curves.
+        // Pure-grayscale aurora: black canvas with subtle white halos drifting
+        // around. No blue/purple — keeps the brand strictly black & white.
         let blobs: [(Color, CGFloat, CGFloat, CGFloat, CGFloat)] = [
-            (Color(red: 0.18, green: 0.40, blue: 0.95), 0.31, 0.27, 0.041, 0.058),
-            (Color(red: 0.55, green: 0.20, blue: 0.95), 0.69, 0.36, 0.037, 0.063),
-            (Color(red: 0.10, green: 0.65, blue: 0.85), 0.50, 0.72, 0.050, 0.043)
+            (Color(white: 1.00), 0.31, 0.27, 0.041, 0.058),
+            (Color(white: 0.85), 0.69, 0.36, 0.037, 0.063),
+            (Color(white: 0.95), 0.50, 0.72, 0.050, 0.043)
         ]
         for (color, baseX, baseY, freqX, freqY) in blobs {
             let cx = baseX * size.width  + sin(t * freqX) * size.width  * 0.18
@@ -49,7 +51,7 @@ struct StarfieldView: View {
             let rect = CGRect(x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2)
             var localCtx = ctx
             localCtx.blendMode = .plusLighter
-            localCtx.opacity = 0.32
+            localCtx.opacity = 0.10
             localCtx.fill(
                 Path(ellipseIn: rect),
                 with: .radialGradient(

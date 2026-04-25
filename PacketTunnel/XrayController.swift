@@ -113,21 +113,43 @@ final class XrayController {
         let dataBase64: String?
     }
 
+    /// libXray wraps every API call's result as `base64(JSON({"success":bool,"error":string,"data":string}))`.
+    /// We try base64-decode first; if that fails we fall back to parsing the raw
+    /// string as JSON (some helper APIs in libXray return JSON directly).
     private static func parseResponse(_ raw: String) -> LibXrayResponse? {
-        guard let data = raw.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return LibXrayResponse(
-            success: dict["success"] as? Bool,
-            error: dict["error"] as? String,
-            dataBase64: dict["data"] as? String
-        )
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Path 1: base64 → JSON
+        if let decoded = Data(base64Encoded: trimmed),
+           let dict = try? JSONSerialization.jsonObject(with: decoded) as? [String: Any] {
+            return LibXrayResponse(
+                success: dict["success"] as? Bool,
+                error: dict["error"] as? String,
+                dataBase64: dict["data"] as? String
+            )
+        }
+
+        // Path 2: plain JSON
+        if let data = trimmed.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return LibXrayResponse(
+                success: dict["success"] as? Bool,
+                error: dict["error"] as? String,
+                dataBase64: dict["data"] as? String
+            )
+        }
+
+        return nil
     }
 
     private static func throwIfNotSuccess(_ raw: String, op: String) throws {
         guard let parsed = parseResponse(raw) else {
+            // Show as much of the raw response as possible so the user can
+            // copy it from the logs and we can debug offline.
+            let preview = String(raw.prefix(800))
+            LogStore.shared.error("\(op) raw response (un-parseable): \(preview)", tag: "Tunnel")
             throw NSError(domain: "XrayController", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Не удалось разобрать ответ LibXray (\(op)): \(raw.prefix(180))"])
+                          userInfo: [NSLocalizedDescriptionKey: "Не удалось разобрать ответ LibXray (\(op))"])
         }
         if parsed.success == false {
             let msg = parsed.error ?? "(no error message)"

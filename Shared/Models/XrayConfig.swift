@@ -51,15 +51,17 @@ public enum XrayConfigBuilder {
         let logDir = dataDir.appendingPathComponent("logs", isDirectory: true)
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
 
+        // Routing rules. xray-core's `geoip:` / `geosite:` / `protocol:` matchers
+        // require the `geoip.dat` / `geosite.dat` asset files, which we do not
+        // ship in the .ipa (they're ~50 MB combined). If we reference any of
+        // those without the assets, infra/conf fails with
+        // "failed to build routing configuration" and the tunnel never starts.
+        // So we keep the rule set explicit and IP/domain-literal-only.
         var routingRules: [[String: Any]] = [
+            // Block private CIDR (10/8, 172.16/12, 192.168/16, 127/8) explicitly.
             [
                 "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "block"
-            ],
-            [
-                "type": "field",
-                "protocol": ["bittorrent"],
+                "ip": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16"],
                 "outboundTag": "block"
             ]
         ]

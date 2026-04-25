@@ -134,7 +134,7 @@ struct ConnectButton: View {
         switch state {
         case .connected:    return Color(red: 0.40, green: 0.85, blue: 0.65) // mint
         case .failed:       return Color(red: 0.95, green: 0.42, blue: 0.42)
-        default:            return Color(red: 0.55, green: 0.78, blue: 1.0)  // soft blue
+        default:            return Color.white                              // mono — disconnected/idle
         }
     }
 

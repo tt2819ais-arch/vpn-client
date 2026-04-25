@@ -46,11 +46,14 @@ private struct ReachabilityBanner: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.13, green: 0.42, blue: 0.92),
-                    Color(red: 0.18, green: 0.55, blue: 0.99)
+                    Color(white: 0.10),
+                    Color(white: 0.02)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
+            )
+            .overlay(
+                Rectangle().fill(Color.white.opacity(0.04))
             )
 
             HStack(spacing: 8) {
