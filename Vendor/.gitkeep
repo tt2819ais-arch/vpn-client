@@ -1,0 +1,3 @@
+# Drop LibXray.xcframework here, then in Xcode:
+#   PacketTunnel target → General → Frameworks → "+" → Add Other → Vendor/LibXray.xcframework
+# See README "Vendoring libXray".

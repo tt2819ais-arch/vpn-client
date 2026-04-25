@@ -1,0 +1,50 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "name": "Россия #1 — Yandex SNI",
+    "flagEmoji": "🇷🇺",
+    "countryCode": "RU",
+    "address": "2.26.53.100",
+    "port": 443,
+    "uuid": "eb208d5a-9438-4400-b000-058288c3b1b1",
+    "flow": "xtls-rprx-vision",
+    "publicKey": "DOUMGEh9tPjkaVgbq5FuEpbnEzzCnbFTsIJF8nEjVR4",
+    "shortId": "6ee75049e018a62a",
+    "serverName": "www.yandex.ru",
+    "fingerprint": "chrome",
+    "routing": "proxy_all",
+    "note": "Стандартный full-tunnel VPN"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "name": "Россия #2 — VK SNI",
+    "flagEmoji": "🇷🇺",
+    "countryCode": "RU",
+    "address": "2.26.53.100",
+    "port": 4443,
+    "uuid": "eb208d5a-9438-4400-b000-058288c3b1b1",
+    "flow": "xtls-rprx-vision",
+    "publicKey": "DOUMGEh9tPjkaVgbq5FuEpbnEzzCnbFTsIJF8nEjVR4",
+    "shortId": "6ee75049e018a62a",
+    "serverName": "vk.com",
+    "fingerprint": "chrome",
+    "routing": "proxy_all",
+    "note": "Стандартный full-tunnel VPN"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "name": "Обход белых списков ⚡️",
+    "flagEmoji": "🇷🇺",
+    "countryCode": "RU",
+    "address": "2.26.53.100",
+    "port": 2096,
+    "uuid": "eb208d5a-9438-4400-b000-058288c3b1b1",
+    "flow": "xtls-rprx-vision",
+    "publicKey": "DOUMGEh9tPjkaVgbq5FuEpbnEzzCnbFTsIJF8nEjVR4",
+    "shortId": "6ee75049e018a62a",
+    "serverName": "www.avito.ru",
+    "fingerprint": "chrome",
+    "routing": "bypass_whitelist",
+    "note": "RU-домены идут direct, всё остальное через прокси"
+  }
+]

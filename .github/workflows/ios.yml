@@ -1,0 +1,129 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (xcodebuild)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n1)
+          echo "Using $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+          xcodebuild -showsdks | sed -n '1,40p'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Cache LibXray.xcframework
+        id: cache-libxray
+        uses: actions/cache@v4
+        with:
+          path: Vendor/LibXray.xcframework
+          key: libxray-xcframework-${{ env.LIBXRAY_VERSION }}
+        env:
+          LIBXRAY_VERSION: 26.1.23
+
+      - name: Download LibXray.xcframework
+        if: steps.cache-libxray.outputs.cache-hit != 'true'
+        env:
+          LIBXRAY_VERSION: 26.1.23
+        run: |
+          set -e
+          mkdir -p Vendor
+          echo "Downloading LibXray.xcframework v$LIBXRAY_VERSION (~300MB)..."
+          curl -sL --fail \
+            "https://github.com/wanliyunyan/LibXray/releases/download/${LIBXRAY_VERSION}/LibXray.xcframework.zip" \
+            -o Vendor/LibXray.xcframework.zip
+          unzip -q Vendor/LibXray.xcframework.zip -d Vendor/
+          rm Vendor/LibXray.xcframework.zip
+          echo "LibXray vendored at:"
+          ls -la Vendor/LibXray.xcframework/
+          du -sh Vendor/LibXray.xcframework
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: List Xcode schemes
+        run: xcodebuild -list -project VPNClient.xcodeproj
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project VPNClient.xcodeproj \
+            -scheme VPNClient
+
+      - name: Build for iOS Simulator (sanity)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project VPNClient.xcodeproj \
+            -scheme VPNClient \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Build for iOS device (unsigned)
+        run: |
+          set -o pipefail
+          rm -rf build
+          xcodebuild \
+            -project VPNClient.xcodeproj \
+            -scheme VPNClient \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            build
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP_PATH="$(find build/DerivedData/Build/Products -type d -name 'VPNClient.app' | head -n1)"
+          echo "APP_PATH=$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "VPNClient.app not found"
+            exit 1
+          fi
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          mkdir -p artifacts
+          /usr/bin/zip -qry "artifacts/VPNClient-unsigned.ipa" Payload
+          ls -la artifacts
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: VPNClient-unsigned-ipa
+          path: artifacts/VPNClient-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
