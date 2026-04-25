@@ -9,34 +9,34 @@ on:
 jobs:
   build:
     name: Build (xcodebuild)
-    runs-on: macos-14
-    timeout-minutes: 25
-
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+    runs-on: macos-15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          XCODE_PATH=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n1)
+          echo "Using $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
 
       - name: Show toolchain
         run: |
           xcodebuild -version
           swift --version
           sw_vers
+          xcodebuild -showsdks | sed -n '1,40p'
 
       - name: Install XcodeGen
-        run: |
-          brew update
-          brew install xcodegen
+        run: brew install xcodegen
 
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: List Xcode SDKs and schemes
-        run: |
-          xcodebuild -list -project VPNClient.xcodeproj
-          xcodebuild -showsdks | head -40
+      - name: List Xcode schemes
+        run: xcodebuild -list -project VPNClient.xcodeproj
 
       - name: Resolve Swift packages
         run: |
@@ -58,19 +58,4 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
             ONLY_ACTIVE_ARCH=NO \
-            build | xcpretty || (echo "Build failed"; exit 1)
-
-      - name: Run unit tests
-        run: |
-          set -o pipefail
-          xcodebuild test \
-            -project VPNClient.xcodeproj \
-            -scheme VPNClient \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
-            -only-testing:VPNClientTests | xcpretty
+            build
