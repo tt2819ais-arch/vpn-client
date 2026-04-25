@@ -44,13 +44,13 @@ jobs:
             -project VPNClient.xcodeproj \
             -scheme VPNClient
 
-      - name: Build app target (no codesign)
+      - name: Build for iOS Simulator (sanity)
         run: |
           set -o pipefail
           xcodebuild \
             -project VPNClient.xcodeproj \
             -scheme VPNClient \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
@@ -59,3 +59,45 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             ONLY_ACTIVE_ARCH=NO \
             build
+
+      - name: Build for iOS device (unsigned)
+        run: |
+          set -o pipefail
+          rm -rf build
+          xcodebuild \
+            -project VPNClient.xcodeproj \
+            -scheme VPNClient \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            build
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP_PATH="$(find build/DerivedData/Build/Products -type d -name 'VPNClient.app' | head -n1)"
+          echo "APP_PATH=$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "VPNClient.app not found"
+            exit 1
+          fi
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          mkdir -p artifacts
+          /usr/bin/zip -qry "artifacts/VPNClient-unsigned.ipa" Payload
+          ls -la artifacts
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: VPNClient-unsigned-ipa
+          path: artifacts/VPNClient-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
